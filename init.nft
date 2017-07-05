@@ -1,0 +1,119 @@
+#                                  
+#   Netfilter's NFTable firewall   
+#                                  
+# This is just a ruleset to play around with the syntax introduced
+# in nftables and itis my way of getting to know it.
+#
+# Here might be dragons!
+#
+# To invoke:
+#
+#   $ sudo iptable-save > iptables.backup
+#   $ sudo iptables -P INPUT DROP
+#   $ sudo iptables -F
+#   $ sudo iptables -X
+#   $ sudo nft flush ruleset && sudo nft -f init.nft
+#
+#  BEWARE: during the above commands there is a short moment where 
+#          there are no firewall rules active. Be sure to only
+#          try this on trusted networks! 
+#
+
+flush ruleset
+
+define admin = { 12.34.56.78/29, 10.11.12.0/8, 172.16.1.0/16 }
+define google_dns = { 8.8.8.8, 8.8.4.4 }
+
+table nat {
+    chain prerouting {
+        type nat hook prerouting priority 0
+        
+        # initiate redirecting on the local machine and redirect incoming 
+        # traffic on port 21 to 2121 which is nice for docker for example
+        redirect
+        tcp dport 21 redirect to 21212
+    }
+
+    chain postrouting {
+        type nat hook postrouting priority 0
+        
+        # we need this chain even if there are no rules for the return path
+    }
+}
+
+table inet filter {
+    set blackhole {
+        # welcome to our blackhole ipset where we set the type of element
+        type ipv4_addr
+        
+        # we will set a timer on the element
+        flags timeout
+
+        # the default value of the timer
+        timeout 1d
+    }
+    
+    chain input {
+        type filter hook input priority 0; policy drop
+
+        ip saddr @blackhole drop
+
+        # connection track and accept previous accepted traffic
+        ct state established,related accept
+
+        # invalid packets (xmas) are logged with ethernet addr, 
+        # tcp options and the sequence
+        ct state invalid log flags all prefix "Invalid!" counter drop
+
+        # localhost godmode
+        iif lo accept
+
+        # open http and https (tcp ports 80 and 443)
+        tcp dport { ssh, http, https } ct state new accept
+
+        # handle packets from iprange to admin chain
+        ip saddr $admin jump admin
+        
+        # icmpv6 for ipv6 connections
+        ip6 nexthdr icmpv6 icmpv6 type {
+            destination-unreachable, packet-too-big, time-exceeded,
+            parameter-problem, nd-router-advert, nd-neighbor-solicit,
+            nd-neighbor-advert
+        } accept
+        
+        # icmp for ipv4 connections 
+        ip protocol icmp icmp type {
+            destination-unreachable, router-advertisement, 
+            time-exceeded, parameter-problem 
+        } accept
+
+        # otherwise we drop, drop, drop
+        log prefix "Incoming packet dropped: "
+    }
+    
+    chain output {
+        type filter hook output priority 0; policy drop
+
+        ct state established,related accept
+        
+        # localhost godmode
+        oif lo accept
+        
+        # check if google dns is used. if not report it
+        udp dport 53 ip daddr != $google_dns log accept
+        tcp dport 53 ip daddr != $google_dns log accept
+
+        tcp dport {http, https} ct state new accept
+
+        # limit outgoing icmp type 8 traffic
+        ip protocol icmp icmp type echo-request limit rate 1/second log accept
+
+        log prefix "Outgoing packet dropped: "
+    }
+    
+    chain admin {
+        tcp dport ssh ct state new log prefix "Admin connection:" accept
+    }
+}
+
+
