@@ -12,11 +12,17 @@
 #   $ sudo iptables -P INPUT DROP
 #   $ sudo iptables -F
 #   $ sudo iptables -X
-#   $ sudo nft flush ruleset && sudo nft -f init.nft
+#   $ sudo nft flush ruleset && sudo nft -f nftables-init.rules
+#
+# To get back to your iptables ruleset:
+#
+#  $ sudo nft flush ruleset
+#  $ sudo iptables-restore < iptables.backup
 #
 #  BEWARE: during the above commands there is a short moment where 
-#          there are no firewall rules active. Be sure to only
-#          try this on trusted networks! 
+#          there are no firewall rules active. That is why the default
+#          policy is changed to drop all traffic. But still you 
+#          should make sure to only try this on trusted networks! 
 #
 
 flush ruleset
@@ -109,9 +115,9 @@ table inet filter {
         oif lo accept
        
         # allow DNS request if they are not to Google's DNS
-	# i think this would qualify as torture, but I
-	# have never claimed this set to be technically 
-	# or morraly sound. 
+        # i think this would qualify as torture, but I
+        # have never claimed this set to be technically 
+        # or morraly sound. 
         udp dport 53 ip daddr $google_dns accept
         tcp dport 53 ip daddr $google_dns accept
 	
@@ -121,8 +127,8 @@ table inet filter {
         # youtube needs this for tracking where you are in the video... weird. 
         udp dport 443 accept
 
-	# mail, really? are you malwa... -uhm- mailware!
-	tcp dport {25,465,587} ip daddr != $mailout log prefix "SPAMALERT!" drop
+        # mail, really? are you malwa... -uhm- mailware!
+        tcp dport {25,465,587} ip daddr != $mailout log prefix "SPAMALERT!" drop
 
         # allow web requests
         tcp dport { http, https } ct state new accept
